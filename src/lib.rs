@@ -3,3 +3,4 @@
 
 pub mod circuits;
 pub mod scaffold;
+pub mod state_machine_chip;

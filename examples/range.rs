@@ -30,13 +30,19 @@ fn some_algorithm_in_zk<F: ScalarField>(
     make_public.push(x);
 
     // create a Range chip that contains methods for basic arithmetic operations
+    println!("Creating Range chip...");
     let range = RangeChip::default(lookup_bits);
 
     // check that `x` is in [0, 2^64)
+    println!("Checking that x is in [0, 2^64)...");
     range.range_check(ctx, x, 64);
 
     // RangeChip contains GateChip so you can still do basic operations:
+    println!("Adding x to itself...");
     let _sum = range.gate().add(ctx, x, x);
+    
+    println!("Done!");
+
 }
 
 fn main() {
