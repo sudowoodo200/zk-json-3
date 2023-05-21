@@ -14,7 +14,7 @@ use halo2_base::{
     AssignedValue, Context,
     QuantumCell::{self, Constant, Existing, Witness},
 };
-use crate::state_machine_chip::state_machine::{State, SpecialChar, StateEncoding, StateCheck, JsonStateMutation, StateBits};
+use crate::state_machine_chip::json_state_machine::{State, SpecialChar, StateEncoding, StateCheck, JsonStateMutation, StateBit};
 
 
 /// Specifies the gate strategy -- aligning with rest of system
@@ -127,20 +127,25 @@ impl<F: ScalarField> StateMachineConfig<F> {
     fn load_lookup_table(&self, layouter: &mut impl Layouter<F>) -> Result<(),Error>{
 
         // load data from text file
-        use std::fs::File;
-        use std::io::{BufRead, BufReader};
+        // use std::fs::File;
+        // use std::io::{BufRead, BufReader};
 
-        let file = File::open("./data/state_transition_table.txt").expect("Failed to open file");
-        let reader = BufReader::new(file);
         let mut contents: Vec<(u64, u64, char)> = Vec::new();
-        for line in reader.lines(){
-            let row = line.unwrap();
-            let buffer: Vec<_> = row.split_ascii_whitespace().collect();
-            let start_state = buffer[0].parse::<u64>().unwrap();
-            let end_state = buffer[1].parse::<u64>().unwrap();
-            let mutation = buffer[2].parse::<char>().unwrap();
-            contents.push((start_state, end_state, mutation));
-        }
+        // let file = File::open("./data/state_transition_table.txt").expect("Failed to open file");
+        // let reader = BufReader::new(file);
+        // for line in reader.lines(){
+        //     let row = line.unwrap();
+        //     let buffer: Vec<_> = row.split_ascii_whitespace().collect();
+        //     let start_state = buffer[0].parse::<u64>().unwrap();
+        //     let end_state = buffer[1].parse::<u64>().unwrap();
+        //     let mutation = buffer[2].parse::<char>().unwrap();
+        //     contents.push((start_state, end_state, mutation));
+        // }
+
+        // Test lookup
+        contents.push((0, 1, 'a'));
+        contents.push((1, 2, 'b'));
+
 
         // metadata
         let n = contents.len();
@@ -201,7 +206,7 @@ pub trait StateMachineInstructions<F: ScalarField> {
 
 impl<F> StateMachineInstructions<F> for StateMachineChip<F>
 where
-    F: ScalarField + JsonStateMutation<State, StateBits, SpecialChar> + StateEncoding<u64>
+    F: ScalarField + JsonStateMutation<State, StateBit, SpecialChar> + StateEncoding<u64>
 {
 
     type Gate = GateChip<F>;
@@ -220,8 +225,9 @@ where
         action: impl Into<QuantumCell<F>>,
     ) -> AssignedValue<F>  {
 
-        let start = State::decode(start.into().value());
-        let action = SpecialChar::from(action.into().value() as char);
+        let id = start.into().value().clone();
+        let start = State::decode(start.into().value().clone());
+        // let action = SpecialChar::from(action.into().value() as char);
 
         let end = start.mutate(action);
 

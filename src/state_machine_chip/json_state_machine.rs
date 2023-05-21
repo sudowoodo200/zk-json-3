@@ -1,7 +1,5 @@
-use crate::state_machine_chip::state_machine::*;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StateBits {
+pub enum StateBit {
     IsInvalid = 0,
     NewDict = 1,
     EndDict = 2,
@@ -14,9 +12,9 @@ pub enum StateBits {
     WordBuffering = 9,
     WordComplete = 10,
 }
-impl StateBits {
-    fn from(id: u64) -> StateBits {
-        use StateBits::*;
+impl StateBit {
+    fn from(id: u64) -> StateBit {
+        use StateBit::*;
         match id {
             0 => IsInvalid,
             1 => NewDict,
@@ -35,7 +33,7 @@ impl StateBits {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct State(Vec<StateBits>);
+pub struct State(Vec<StateBit>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpecialChar {
@@ -116,7 +114,7 @@ where
         let mut i = 0;
         while id != 0 {
             if id % 2 == 1 {
-                state.on(StateBits::from(i));
+                state.on(StateBit::from(i));
             }
             id = id >> 1;
             i += 1;
@@ -126,9 +124,9 @@ where
 
 }
 
-use StateBits::*;
+use StateBit::*;
 
-impl StateCheck<StateBits> for State {
+impl StateCheck<StateBit> for State {
 
     fn new() -> Self {
         Self( Vec::new() )
@@ -142,19 +140,19 @@ impl StateCheck<StateBits> for State {
         Self(vec![IsInvalid])
     }
 
-    fn on(&mut self, bit: StateBits) {
+    fn on(&mut self, bit: StateBit) {
         if !self.0.contains(&bit) {
             self.0.push(bit);
         }
     }
 
-    fn off(&mut self, bit: StateBits) {
+    fn off(&mut self, bit: StateBit) {
         if self.0.contains(&bit) {
             self.0.retain(|&x| x != bit);
         }
     }
 
-    fn flip(&mut self, bit: StateBits) {
+    fn flip(&mut self, bit: StateBit) {
         if self.0.contains(&bit) {
             self.0.retain(|&x| x != bit);
         } else {
@@ -162,7 +160,7 @@ impl StateCheck<StateBits> for State {
         }
     }
 
-    fn check(&self, bit: StateBits) -> bool {
+    fn check(&self, bit: StateBit) -> bool {
         self.0.contains(&bit)
     }
 
@@ -170,11 +168,11 @@ impl StateCheck<StateBits> for State {
         self.0.is_empty()
     }
 
-    fn check_and(&self, bits: Vec<StateBits>) -> bool {
+    fn check_and(&self, bits: Vec<StateBit>) -> bool {
         bits.iter().all(|&bit| self.0.contains(&bit))
     }
 
-    fn check_or(&self, bits: Vec<StateBits>) -> bool {
+    fn check_or(&self, bits: Vec<StateBit>) -> bool {
         bits.iter().any(|&bit| self.0.contains(&bit))
     }
 
@@ -184,9 +182,9 @@ impl StateCheck<StateBits> for State {
 
 }
 
-impl<S> JsonStateMutation<S, StateBits, SpecialChar> for S
+impl<S> JsonStateMutation<S, StateBit, SpecialChar> for S
 where
-    S: StateCheck<StateBits> + Clone
+    S: StateCheck<StateBit> + Clone
 {
 
     fn mutate(&self, action: SpecialChar) -> Self {
