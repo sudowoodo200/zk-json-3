@@ -188,6 +188,7 @@ pub struct StateMachineChip<F: ScalarField> {
     strategy: StateMachineStrategy,
     pub gate: GateChip<F>,
     pub state_machine: State,
+    pub transition_table: Vec<(State, State, SpecialChar)>,
 }
 
 pub trait StateMachineInstructions<F: ScalarField> {

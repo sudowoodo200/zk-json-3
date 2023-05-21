@@ -162,6 +162,10 @@ where
         self.state = (self.mutation)(&self.state, a);
     }
 
+    pub fn preview_step(&mut self, a: A) -> State<B> {
+        (self.mutation)(&self.state, a)
+    }
+
     pub fn set_mutation_fn(&mut self, mutation: Box<dyn FnMut(&State<B>, A) -> State<B>>) {
         self.mutation = mutation;
     }
@@ -174,9 +178,8 @@ where
         self.state.encode()
     }
 
-    pub fn decode_and_update<F: EncodingField>(&self, id: F) -> State<B> {
+    pub fn decode_and_update<F: EncodingField>(&self, id: F){
         self.state = State::decode(id);
-        self.state.clone()
     }
 
 }
@@ -204,13 +207,11 @@ mod gen_lookup {
             while !bfs_buffer.is_empty() {
 
                 let before = bfs_buffer.pop().unwrap();
-                let state: State<B> = state_machine.decode_and_update::<F>(before);
                 bfs_memory.insert(before);
 
+                state_machine.decode_and_update::<F>(before);
                 for action in action_set.into_iter() {
-                    
-                    state_machine.step(action);
-                    let after = state_machine.encode();
+                    let after = state_machine.preview_step(action).encode();
                     let row = (before, after, action);
                     lookup_table.push(row);
                     if !bfs_memory.contains(&after) && !bfs_buffer.contains(&after){
