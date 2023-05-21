@@ -1,20 +1,23 @@
+use clap::error;
 use halo2_base::{
     gates::flex_gate::{GateChip, FlexGateConfig, GateInstructions, GateStrategy, MAX_PHASE},
     halo2_proofs::{
         circuit::{Layouter, Value},
         plonk::{
             Advice, Column, ConstraintSystem, Error, SecondPhase, Selector, TableColumn, ThirdPhase,
+            Assigned
         },
         poly::Rotation,
     },
     utils::{
-        biguint_to_fe, bit_length, decompose_fe_to_u64_limbs, fe_to_biguint, BigPrimeField,
         ScalarField,
     },
     AssignedValue, Context,
     QuantumCell::{self, Constant, Existing, Witness},
 };
 use crate::state_machine_chip::json_state_machine::{State, SpecialChar, StateEncoding, StateCheck, JsonStateMutation, StateBit};
+
+use super::state_machine::StateMachine;
 
 
 /// Specifies the gate strategy -- aligning with rest of system
@@ -38,8 +41,7 @@ pub enum StateMachineStrategy {
 pub struct StateMachineConfig<F: ScalarField> {
 
     pub gate: FlexGateConfig<F>,
-    pub states: Column<Advice>,
-    pub mutation: Column<Advice>,
+    pub transcript: Column<Advice>,
     pub q_lookup: Selector,
     pub lookup: [TableColumn; 3],
     _strategy: StateMachineStrategy,
@@ -67,18 +69,15 @@ impl<F: ScalarField> StateMachineConfig<F> {
             circuit_degree,
         );
 
-        let states = meta.advice_column();
-        let mutation = meta.advice_column();
+        let transcript = meta.advice_column();
         let q_lookup = meta.complex_selector();
         let lookup = [();3].map(|_| meta.lookup_table_column());
 
-        meta.enable_equality(states);
-        meta.enable_equality(mutation);
+        meta.enable_equality(transcript);
 
         let config = Self {
             gate,
-            states,
-            mutation,
+            transcript,
             q_lookup,
             lookup,
             _strategy: state_machine_strategy,
@@ -95,24 +94,13 @@ impl<F: ScalarField> StateMachineConfig<F> {
 
     fn create_lookup(&self, meta: &mut ConstraintSystem<F>) {
 
-        meta.create_gate(
-            "State must start from 0",
-            |meta| {
-                let ql = meta.query_selector(self.q_lookup);
-                let curr_state = meta.query_advice(self.states, Rotation::cur());
-                vec![
-                    ql * curr_state
-                ]
-            },
-        );
-
         meta.lookup(
             "State Transition Lookups", 
             |meta| {
-                let ql = meta.query_selector(self.q_lookup);
-                let curr_state = meta.query_advice(self.states, Rotation::cur());
-                let next_state = meta.query_advice(self.states, Rotation::next());
-                let mutation = meta.query_advice(self.mutation, Rotation::cur());
+                let ql = meta.query_selector(self.q_lookup); // only turned on for odd idx
+                let curr_state = meta.query_advice(self.transcript, Rotation::cur());
+                let mutation = meta.query_advice(self.transcript, Rotation::next());
+                let next_state = meta.query_advice(self.transcript, Rotation(2));
 
                 vec![
                     (ql.clone() * curr_state, self.lookup[0]),
@@ -187,8 +175,7 @@ impl<F: ScalarField> StateMachineConfig<F> {
 pub struct StateMachineChip<F: ScalarField> {
     strategy: StateMachineStrategy,
     pub gate: GateChip<F>,
-    pub state_machine: State,
-    pub transition_table: Vec<(State, State, SpecialChar)>,
+    pub transition_table: Vec<(F, F, F)>,
 }
 
 pub trait StateMachineInstructions<F: ScalarField> {
@@ -197,17 +184,37 @@ pub trait StateMachineInstructions<F: ScalarField> {
 
     fn gate(&self) -> &Self::Gate;
     fn strategy(&self) -> StateMachineStrategy;
+    fn next_state(&self, start: F, action: F) -> F;
     fn mutate_state(
         &self,
+        ctx: &mut Context<F>,
         start: impl Into<QuantumCell<F>>,
         action: impl Into<QuantumCell<F>>,
     ) -> AssignedValue<F>;
 
 }
 
+impl<F> StateMachineChip<F>
+where F: ScalarField + JsonStateMutation<State, StateBit, SpecialChar> + StateEncoding<u64>
+{
+    pub fn new(strategy: StateMachineStrategy, transition_table:Vec<(F,F,F)>) -> Self{
+        let gate = GateChip::new(
+            match strategy {
+                StateMachineStrategy::Vertical => GateStrategy::Vertical,
+            },
+        );
+
+        Self {
+            strategy,
+            gate,
+            transition_table,
+        }
+    }
+}
+
 impl<F> StateMachineInstructions<F> for StateMachineChip<F>
 where
-    F: ScalarField + JsonStateMutation<State, StateBit, SpecialChar> + StateEncoding<u64>
+    F: ScalarField
 {
 
     type Gate = GateChip<F>;
@@ -220,29 +227,58 @@ where
         self.strategy
     }
 
+    fn next_state(&self, start: F, action: F) -> F {
+        let mut next_state = start;
+        let mut mutation = action;
+        for (start_state, end_state, action_flag) in self.transition_table.iter() {
+            if start == *start_state && action == *action_flag {
+                next_state = *end_state;
+            }
+        }
+        next_state
+    }
+
     fn mutate_state(
         &self,
+        ctx: &mut Context<F>,
         start: impl Into<QuantumCell<F>>,
         action: impl Into<QuantumCell<F>>,
     ) -> AssignedValue<F>  {
 
-        let id = start.into().value().clone();
-        let start = State::decode(start.into().value().clone());
-        // let action = SpecialChar::from(action.into().value() as char);
+        fn unpack<F: ScalarField>(qc: impl Into<QuantumCell<F>>) -> F {
 
-        let end = start.mutate(action);
+            fn unpack_assignedvalue<F: ScalarField>(av: AssignedValue<F>) -> F {
+                match av.value {
+                    Assigned::Trivial(av) => av,
+                    _ => panic!("Invalid assigned value"),
+                }
+            }
 
-        // TODO: Field Abstraction Issues for encoder
-        // I believe ScalarField does not support From<u64> and Into<u64> operations, which breaks trait bounds for StateEncoding
-        // StateEncoding must be implemented to support generic fields; only need >> and << operations
-        // Go through the QuantumCell abstraction again to make sure it is correct
+            let value = match qc.into() {
+                QuantumCell::Existing(f) => unpack_assignedvalue(f),
+                QuantumCell::Witness(f) => f,
+                QuantumCell::Constant(f) => f,
+                _ => panic!("Invalid start state"),
+            };
 
-        // TODO: Enum Abstraction Issues for Action
-        // We should reimplement From for SpecialChar to support generic fields, instead of relying on chars
+            value 
+        }
+        let start_f = unpack(start);
+        let action_f = unpack(action);
+        let next_f = self.next_state(start_f, action_f);
 
+        // THIS IS almost 100% WRONG....
+        // Intent is to assign the incremental action, state pair to the column
+        // How do you initialize the first row? How do you choose which selector to flip?
+        // | s_0 | a_0 | s_1 | a_1 | ... 
+        ctx.assign_region(
+            [Witness(action_f), Witness(next_f)],
+            [1]
+        );
+        ctx.get(-1)
         
     }
 
 }
 
-// TODO: Need a Builder
+// TODO: I think I need to make a builder...

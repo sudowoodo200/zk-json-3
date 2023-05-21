@@ -1,10 +1,12 @@
+/// Abstract State Machine =============================================
+/// Not yet in use. This is meant to work well with Halo2 Fields
+/// Using a hard coded look up table for now instead.
+
+
 use std::ops::{Add, Sub, Mul, Div, Rem};
 use num_traits::{Pow, NumCast, Zero, One};
 use std::marker::PhantomData;
 use std::hash::{Hash};
-
-/// State and Action Abstractions  =============================================
-/// Trying to make one that works well with halo2 field abstractions
 
 pub trait StateBit: From<u8> + Into<u8> + Copy + Eq {
     fn error_bit() -> Self;
@@ -178,7 +180,7 @@ where
         self.state.encode()
     }
 
-    pub fn decode_and_update<F: EncodingField>(&self, id: F){
+    pub fn decode_and_update<F: EncodingField>(&mut self, id: F){
         self.state = State::decode(id);
     }
 
@@ -187,42 +189,43 @@ where
 // Generate a lookup table
 mod gen_lookup {
 
-        use super::*;
-        use std::collections::HashSet;
-    
-        pub fn bfs_gen_lookup_table<A,B,F>(action_set: Vec<A>) -> Vec<(F, F, A)>
-        where
-            A: StateAction,
-            B: StateBit,
-            F: EncodingField,
-        {
-    
-            let mut lookup_table: Vec<(F, F, A)> = vec![];
-            let mut bfs_buffer: Vec<F> = vec![];
-            let mut bfs_memory: HashSet<F> = HashSet::new();
-            let mut state_machine = StateMachine::<A, B>::begin();
+    use super::*;
+    use std::collections::HashSet;
 
-            // BFS
-            bfs_buffer.push(state_machine.encode::<F>());
-            while !bfs_buffer.is_empty() {
+    pub fn bfs_gen_lookup_table<A,B,F>(action_set: Vec<A>) -> Vec<(F, F, A)>
+    where
+        A: StateAction,
+        B: StateBit,
+        F: EncodingField,
+    {
 
-                let before = bfs_buffer.pop().unwrap();
-                bfs_memory.insert(before);
+        let mut lookup_table: Vec<(F, F, A)> = vec![];
+        let mut bfs_buffer: Vec<F> = vec![];
+        let mut bfs_memory: HashSet<F> = HashSet::new();
+        let mut state_machine = StateMachine::<A, B>::begin();
 
-                state_machine.decode_and_update::<F>(before);
-                for action in action_set.into_iter() {
-                    let after = state_machine.preview_step(action).encode();
-                    let row = (before, after, action);
-                    lookup_table.push(row);
-                    if !bfs_memory.contains(&after) && !bfs_buffer.contains(&after){
-                        bfs_buffer.push(after);
-                    }
+        // BFS
+        bfs_buffer.push(state_machine.encode::<F>());
+        while !bfs_buffer.is_empty() {
+
+            let before = bfs_buffer.pop().unwrap();
+            bfs_memory.insert(before);
+
+            state_machine.decode_and_update::<F>(before);
+            for a in action_set.iter() {
+                let action = a.clone();
+                let after = state_machine.preview_step(action).encode();
+                let row = (before, after, action);
+                lookup_table.push(row);
+                if !bfs_memory.contains(&after) && !bfs_buffer.contains(&after){
+                    bfs_buffer.push(after);
                 }
             }
-
-            lookup_table
-
         }
+
+        lookup_table
+
+    }
 
 }
 
